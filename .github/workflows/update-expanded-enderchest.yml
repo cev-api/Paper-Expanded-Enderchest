@@ -46,11 +46,14 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Must be global: applyFeaturePatches and rebuildPatches make commits inside the
+      # nested patch repositories under paper-server/src/minecraft, which inherit the
+      # global identity but not the one configured for this checkout.
       - name: Configure git
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Fetch upstream Paper
         run: |
