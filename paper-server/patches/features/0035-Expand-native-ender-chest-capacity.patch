@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: cev-api <cev-api@users.noreply.github.com>
+Date: Fri, 18 Sep 2026 02:47:15 +1000
+Subject: [PATCH] Expand native ender chest capacity
+
+Resizes the player's real PlayerEnderChestContainer itself according to the new misc.ender-chest-slot-count global configuration option, and opens that same container in a native ChestMenu sized to match.
+
+There is no virtual inventory, no copy on open/close and no InventoryCloseEvent based synchronisation: exactly one authoritative ender chest inventory exists per player.
+
+diff --git a/net/minecraft/world/inventory/PlayerEnderChestContainer.java b/net/minecraft/world/inventory/PlayerEnderChestContainer.java
+index 4df3a32faf85595372f4b250482d852c985ea3ab..5fff44d6271e91729573a95b18066fea82257819 100644
+--- a/net/minecraft/world/inventory/PlayerEnderChestContainer.java
++++ b/net/minecraft/world/inventory/PlayerEnderChestContainer.java
+@@ -26,7 +26,8 @@ public class PlayerEnderChestContainer extends SimpleContainer {
+     }
+ 
+     public PlayerEnderChestContainer(Player owner) {
+-        super(27);
++        // ExpandedEnderChest - configurable native ender chest capacity; the real container itself is resized
++        super(io.papermc.paper.configuration.GlobalConfiguration.get().misc.enderChestSlotCount);
+         this.owner = owner;
+         // CraftBukkit end
+     }
+diff --git a/net/minecraft/world/level/block/EnderChestBlock.java b/net/minecraft/world/level/block/EnderChestBlock.java
+index f1a5b9670dd04b800a8d755f32364458a16d924a..c6c272bb2bb518fa66d3e60ff8b6a2e171a6f343 100644
+--- a/net/minecraft/world/level/block/EnderChestBlock.java
++++ b/net/minecraft/world/level/block/EnderChestBlock.java
+@@ -90,7 +90,20 @@ public class EnderChestBlock extends AbstractChestBlock<EnderChestBlockEntity> i
+             // Paper start - Fix InventoryOpenEvent cancellation - moved up;
+             container.setActiveChest(enderChest); // Needs to happen before ChestMenu.threeRows as it is required for opening animations
+             if (level instanceof ServerLevel serverLevel && player.openMenu(
+-                new SimpleMenuProvider((containerId, inventory, p) -> ChestMenu.threeRows(containerId, inventory, container), CONTAINER_TITLE)
++                // ExpandedEnderChest start - configurable native ender chest capacity
++                new SimpleMenuProvider((containerId, inventory, p) -> {
++                    final int rows = io.papermc.paper.enderchest.ExpandedEnderChest.rowsForSlotCount(container.getContainerSize());
++                    final net.minecraft.world.inventory.MenuType<?> menuType = switch (rows) {
++                        case 1 -> net.minecraft.world.inventory.MenuType.GENERIC_9x1;
++                        case 2 -> net.minecraft.world.inventory.MenuType.GENERIC_9x2;
++                        case 3 -> net.minecraft.world.inventory.MenuType.GENERIC_9x3;
++                        case 4 -> net.minecraft.world.inventory.MenuType.GENERIC_9x4;
++                        case 5 -> net.minecraft.world.inventory.MenuType.GENERIC_9x5;
++                        default -> net.minecraft.world.inventory.MenuType.GENERIC_9x6;
++                    };
++                    return new ChestMenu(menuType, containerId, inventory, container, rows);
++                }, CONTAINER_TITLE)
++                // ExpandedEnderChest end - configurable native ender chest capacity
+             ).isPresent()) {
+             // Paper end - Fix InventoryOpenEvent cancellation - moved up;
+                 player.awardStat(Stats.OPEN_ENDERCHEST);
