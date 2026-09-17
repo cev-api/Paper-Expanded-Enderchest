@@ -33,6 +33,9 @@ env:
   MIRROR_BRANCH: main
   UPSTREAM_URL: https://github.com/PaperMC/Paper.git
   SUPPORTED_MC_VERSION: '26.2'
+  # Adding the upstream remote makes gh resolve repositories from that remote, so pin
+  # every gh command to this fork instead of PaperMC/Paper.
+  GH_REPO: ${{ github.repository }}
 
 jobs:
   update:
@@ -54,6 +57,20 @@ jobs:
           set -euo pipefail
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Safety net. Adding the upstream remote makes gh resolve commands against
+      # PaperMC/Paper, which would attempt to publish there, and a mislabelled
+      # origin would push the rebased branch to the wrong place.
+      - name: Verify the remotes point where they should
+        run: |
+          set -euo pipefail
+          origin_path="$(git remote get-url origin | sed -E 's#^https://([^@/]+@)?github\.com/##; s#\.git$##')"
+          if [ "$origin_path" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error title=Unexpected origin remote::origin resolves to '${origin_path}' but this run must operate on '${GITHUB_REPOSITORY}'. Refusing to continue so nothing is pushed or released to the wrong repository."
+            exit 1
+          fi
+          echo "origin  -> ${origin_path}"
+          echo "GH_REPO -> ${GH_REPO}"
 
       - name: Fetch upstream Paper
         run: |
@@ -182,6 +199,7 @@ jobs:
           set -euo pipefail
           mc="$SUPPORTED_MC_VERSION"
           short="${{ steps.upstream.outputs.short_sha }}"
+          repo="$GITHUB_REPOSITORY"
           branch_sha="$(git rev-parse HEAD)"
           tag="expanded-enderchest-${mc}-${short}"
           asset_name="paper-${mc}-expanded-enderchest-${short}.jar"
@@ -210,11 +228,12 @@ jobs:
           PaperMC. Use at your own risk.
           EOF
 
-          if gh release view "$tag" >/dev/null 2>&1; then
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
             echo "Release ${tag} already exists, leaving it untouched"
           else
             cp "${{ steps.jar.outputs.path }}" "$asset_path"
             gh release create "$tag" "$asset_path" \
+              --repo "$repo" \
               --target "$branch_sha" \
               --title "Expanded ender chest ${mc} (${short})" \
               --notes-file "$notes_file"
@@ -227,13 +246,15 @@ jobs:
           cp "${{ steps.jar.outputs.path }}" "$alias_asset"
           git tag -f "$alias_tag" "$branch_sha"
           git push --force origin "refs/tags/${alias_tag}"
-          if gh release view "$alias_tag" >/dev/null 2>&1; then
-            gh release upload "$alias_tag" "$alias_asset" --clobber
+          if gh release view "$alias_tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release upload "$alias_tag" "$alias_asset" --repo "$repo" --clobber
             gh release edit "$alias_tag" \
+              --repo "$repo" \
               --title "Expanded ender chest ${mc} (latest)" \
               --notes-file "$notes_file"
           else
             gh release create "$alias_tag" "$alias_asset" \
+              --repo "$repo" \
               --target "$branch_sha" \
               --title "Expanded ender chest ${mc} (latest)" \
               --notes-file "$notes_file"
