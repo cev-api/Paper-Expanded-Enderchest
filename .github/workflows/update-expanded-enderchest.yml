@@ -1,0 +1,248 @@
+# Downstream maintenance workflow for the expanded ender chest fork.
+#
+# Upstream Paper cannot trigger workflows inside this fork, so this job polls
+# upstream/main on a schedule, rebases the custom branch onto it, rebuilds the
+# server and publishes a release.
+#
+# NOTE: scheduled workflows only run from the repository default branch, which is
+# why `expanded-enderchest` must stay the default branch and why this file has to
+# live on `expanded-enderchest` rather than on `main`.
+name: Update expanded ender chest
+
+on:
+  schedule:
+    # Every 6 hours.
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Rebuild and republish even when upstream has not advanced
+        type: boolean
+        default: false
+
+# Never let two update jobs touch the branch at the same time.
+concurrency:
+  group: update-expanded-enderchest
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CUSTOM_BRANCH: expanded-enderchest
+  MIRROR_BRANCH: main
+  UPSTREAM_URL: https://github.com/PaperMC/Paper.git
+  SUPPORTED_MC_VERSION: '26.2'
+
+jobs:
+  update:
+    name: Rebase, build and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the custom branch
+        uses: actions/checkout@v7
+        with:
+          ref: expanded-enderchest
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream Paper
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+
+      - name: Read the upstream Minecraft version
+        id: upstream
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse upstream/main)"
+          version="$(git show upstream/main:gradle.properties | sed -n 's/^mcVersion=//p' | tr -d '\r\n' | xargs)"
+          if [ -z "$version" ]; then
+            echo "::error title=Unreadable version::Could not read mcVersion from upstream/main:gradle.properties"
+            exit 1
+          fi
+          {
+            echo "sha=${sha}"
+            echo "short_sha=${sha:0:7}"
+            echo "mc_version=${version}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Upstream Paper main is ${sha} targeting Minecraft ${version}"
+
+      - name: Refuse to cross a Minecraft version boundary
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.upstream.outputs.mc_version }}" != "$SUPPORTED_MC_VERSION" ]; then
+            echo "::error title=Manual port required::Upstream Paper now targets Minecraft ${{ steps.upstream.outputs.mc_version }} instead of ${SUPPORTED_MC_VERSION}. Automatic updates intentionally stop here so that no cross-version port is attempted. Port the expanded ender chest by hand, then update SUPPORTED_MC_VERSION in this workflow."
+            exit 1
+          fi
+
+      - name: Decide whether an update is required
+        id: check
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            if [ "${{ inputs.force_rebuild }}" = "true" ]; then
+              echo "Forced rebuild requested for ${{ steps.upstream.outputs.sha }}"
+              echo "update=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${{ steps.upstream.outputs.sha }} is already an ancestor of HEAD, nothing to do"
+              echo "update=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "Upstream has advanced, a rebase is required"
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebase the custom branch onto upstream
+        if: steps.check.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          if ! git rebase upstream/main; then
+            git rebase --abort || true
+            echo "::error title=Rebase conflict::The custom commits no longer rebase cleanly onto ${{ steps.upstream.outputs.sha }}. Nothing has been pushed and the remote ${CUSTOM_BRANCH} branch is untouched. Resolve the conflict by hand."
+            exit 1
+          fi
+          echo "Rebased onto ${{ steps.upstream.outputs.sha }}"
+
+      - name: Set up JDK 25
+        if: steps.check.outputs.update == 'true'
+        uses: actions/setup-java@v6
+        with:
+          java-version: '25'
+          distribution: zulu
+
+      - name: Set up Gradle
+        if: steps.check.outputs.update == 'true'
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Apply Paper patches
+        if: steps.check.outputs.update == 'true'
+        run: ./gradlew applyPatches --stacktrace
+
+      - name: Rebuild Paper patches
+        if: steps.check.outputs.update == 'true'
+        run: ./gradlew rebuildPatches --stacktrace
+
+      - name: Commit regenerated patch files
+        if: steps.check.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "Regenerate patches against upstream ${{ steps.upstream.outputs.short_sha }}"
+            echo "Committed regenerated patch files"
+          else
+            echo "Patch files were already up to date"
+          fi
+
+      - name: Run the expanded ender chest tests
+        if: steps.check.outputs.update == 'true'
+        run: ./gradlew :paper-server:test --tests "io.papermc.paper.enderchest.ExpandedEnderChestTestSuite" --stacktrace
+
+      - name: Build the server jar
+        if: steps.check.outputs.update == 'true'
+        run: ./gradlew createPaperclipJar --stacktrace
+
+      - name: Locate the built server jar
+        if: steps.check.outputs.update == 'true'
+        id: jar
+        run: |
+          set -euo pipefail
+          jar="$(find paper-server/build/libs -maxdepth 1 -name 'paper-paperclip-*.jar' | head -n 1)"
+          if [ -z "$jar" ]; then
+            echo "::error title=Missing build output::createPaperclipJar did not produce paper-server/build/libs/paper-paperclip-*.jar"
+            exit 1
+          fi
+          echo "path=${jar}" >> "$GITHUB_OUTPUT"
+          echo "Built ${jar}"
+
+      # Nothing is pushed until patching and compilation have both succeeded.
+      - name: Push the rebased branch and the upstream mirror
+        if: steps.check.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          git push --force-with-lease origin "HEAD:${CUSTOM_BRANCH}"
+          git push --force-with-lease origin "upstream/main:${MIRROR_BRANCH}"
+
+      - name: Publish the release
+        if: steps.check.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mc="$SUPPORTED_MC_VERSION"
+          short="${{ steps.upstream.outputs.short_sha }}"
+          branch_sha="$(git rev-parse HEAD)"
+          tag="expanded-enderchest-${mc}-${short}"
+          asset_name="paper-${mc}-expanded-enderchest-${short}.jar"
+          asset_path="${RUNNER_TEMP}/${asset_name}"
+          notes_file="${RUNNER_TEMP}/release-notes.md"
+
+          cat > "$notes_file" <<EOF
+          Unofficial downstream Paper build with a configurable native ender chest.
+
+          - Minecraft version: ${mc}
+          - Upstream Paper commit: ${{ steps.upstream.outputs.sha }}
+          - Source branch commit: ${branch_sha}
+          - Source: https://github.com/${GITHUB_REPOSITORY}/tree/${CUSTOM_BRANCH}
+
+          ## Feature
+
+          Configurable native expanded ender chest capacity, 9 to 54 slots in multiples of 9.
+          Configure \`misc.ender-chest-slot-count\` in \`config/paper-global.yml\`; the default is 27.
+
+          The player's real \`PlayerEnderChestContainer\` itself holds the configured number of slots,
+          and physical ender chests open that same container. There is no virtual inventory, no
+          copy-on-open/copy-on-close behaviour and no \`InventoryCloseEvent\` based synchronisation.
+
+          This is **not** an official PaperMC build. It is an unofficial downstream fork build
+          produced from the \`${CUSTOM_BRANCH}\` branch and is not endorsed by or affiliated with
+          PaperMC. Use at your own risk.
+          EOF
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists, leaving it untouched"
+          else
+            cp "${{ steps.jar.outputs.path }}" "$asset_path"
+            gh release create "$tag" "$asset_path" \
+              --target "$branch_sha" \
+              --title "Expanded ender chest ${mc} (${short})" \
+              --notes-file "$notes_file"
+          fi
+
+          # Moving alias pointing at the newest build. The immutable SHA specific
+          # releases above are never modified.
+          alias_tag="expanded-enderchest-latest"
+          alias_asset="${RUNNER_TEMP}/paper-${mc}-expanded-enderchest-latest.jar"
+          cp "${{ steps.jar.outputs.path }}" "$alias_asset"
+          git tag -f "$alias_tag" "$branch_sha"
+          git push --force origin "refs/tags/${alias_tag}"
+          if gh release view "$alias_tag" >/dev/null 2>&1; then
+            gh release upload "$alias_tag" "$alias_asset" --clobber
+            gh release edit "$alias_tag" \
+              --title "Expanded ender chest ${mc} (latest)" \
+              --notes-file "$notes_file"
+          else
+            gh release create "$alias_tag" "$alias_asset" \
+              --target "$branch_sha" \
+              --title "Expanded ender chest ${mc} (latest)" \
+              --notes-file "$notes_file"
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: update-failure-logs-${{ github.run_id }}
+          path: |
+            paper-server/build/reports/**
+            paper-server/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 14
