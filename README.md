@@ -8,6 +8,53 @@ Paper [![Version](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2
 
 The most widely used, high-performance Minecraft server that aims to fix gameplay and mechanics inconsistencies.
 
+---
+
+## ⚠️ Downstream fork: expanded ender chest
+
+> **This repository is an unofficial downstream fork of Paper and is not an official PaperMC build.**
+> It tracks upstream [PaperMC/Paper](https://github.com/PaperMC/Paper) for Minecraft **26.2** and adds
+> exactly one feature, kept on the [`expanded-enderchest`](https://github.com/cev-api/Paper/tree/expanded-enderchest) branch.
+
+### Configurable native ender chest capacity
+
+The size of a player's ender chest is configurable. Add the setting to `config/paper-global.yml`:
+
+```yaml
+misc:
+  ender-chest-slot-count: 27
+```
+
+| Setting | Default | Valid values |
+| --- | --- | --- |
+| `misc.ender-chest-slot-count` | `27` | multiples of `9` between `9` and `54` (`9`, `18`, `27`, `36`, `45`, `54`) |
+
+Values outside that set are rounded to the nearest supported size and logged as a warning.
+The configured size is applied when a player's ender chest is created, so **restart the server** for a
+change to take effect.
+
+#### How it works
+
+- The player's real `PlayerEnderChestContainer` is resized itself, so its slot count **is** the configured size.
+- Opening a physical ender chest opens that exact same container, wrapped in a native chest menu with the
+  matching number of rows: `9` → 1 row, `18` → 2 rows, … `54` → 6 rows.
+- There is exactly **one authoritative ender chest inventory** per player. This is not a virtual `/ec`
+  inventory, not a plugin, not a database-backed inventory, and not a copy-on-open / copy-on-close
+  synchronisation system. Nothing depends on `InventoryCloseEvent` to commit item state.
+- Existing 27-slot ender chest data stays compatible: the first 27 slots keep their contents.
+
+> ⚠️ **Increasing** the configured size is safe and simply adds usable slots. **Decreasing** it makes the
+> contents of the removed slots unreadable, and they are dropped the next time that player's data is saved.
+> Move items out of the high slots before reducing the size.
+
+### Precompiled builds and automatic updates
+
+The [releases page](https://github.com/cev-api/Paper/releases) contains precompiled Paperclip jars.
+A scheduled workflow rebases this feature onto upstream Paper 26.2 every six hours, rebuilds the server
+and publishes a new release. If Paper moves to a different Minecraft version the automation stops on
+purpose instead of attempting a cross-version port, and the feature has to be ported by hand.
+
+---
 
 **Support and Project Discussion:**
 - [Our forums](https://forums.papermc.io/) or [Discord](https://discord.gg/papermc)
