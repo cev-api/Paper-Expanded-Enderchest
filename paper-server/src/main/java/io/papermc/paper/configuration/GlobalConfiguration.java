@@ -343,6 +343,24 @@ public class GlobalConfiguration extends ConfigurationPart {
         public boolean fixFarEndTerrainGeneration = true;
         @Comment("Fix for MC-301114. This removes the oldest combat entry when it hits the cap, to fix a memory leak on constant entity damage.")
         public IntOr.Disabled maxTrackingCombatEntries = new IntOr.Disabled(OptionalInt.of(10240));
+        // ExpandedEnderChest start - configurable native ender chest capacity
+        @Comment("Number of slots in a player's ender chest. Supports 9 to 54 slots in multiples of 9. Invalid values are rounded to the nearest supported size.")
+        public int enderChestSlotCount = io.papermc.paper.enderchest.ExpandedEnderChest.DEFAULT_SLOT_COUNT;
+
+        @PostProcess
+        private void postProcessEnderChestSlotCount() {
+            final int configured = this.enderChestSlotCount;
+            this.enderChestSlotCount = io.papermc.paper.enderchest.ExpandedEnderChest.normalizeSlotCount(configured);
+            if (configured != this.enderChestSlotCount) {
+                LOGGER.warn(
+                    "Invalid {} value '{}', using '{}'. Valid values are multiples of 9 between {} and {}.",
+                    "misc.ender-chest-slot-count", configured, this.enderChestSlotCount,
+                    io.papermc.paper.enderchest.ExpandedEnderChest.MIN_SLOT_COUNT,
+                    io.papermc.paper.enderchest.ExpandedEnderChest.MAX_SLOT_COUNT
+                );
+            }
+        }
+        // ExpandedEnderChest end - configurable native ender chest capacity
     }
 
     public BlockUpdates blockUpdates;
