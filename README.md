@@ -14,7 +14,7 @@ The most widely used, high-performance Minecraft server that aims to fix gamepla
 
 > **This repository is an unofficial downstream fork of Paper and is not an official PaperMC build.**
 > It tracks upstream [PaperMC/Paper](https://github.com/PaperMC/Paper) for Minecraft **26.2** and adds
-> exactly one feature, kept on the [`expanded-enderchest`](https://github.com/cev-api/Paper/tree/expanded-enderchest) branch.
+> exactly one feature, kept on the [`expanded-enderchest`](https://github.com/cev-api/Paper-Expanded-Enderchest/tree/expanded-enderchest) branch.
 
 ### Configurable native ender chest capacity
 
@@ -49,7 +49,7 @@ change to take effect.
 
 ### Precompiled builds and automatic updates
 
-The [releases page](https://github.com/cev-api/Paper/releases) contains precompiled Paperclip jars.
+The [releases page](https://github.com/cev-api/Paper-Expanded-Enderchest/releases) contains precompiled Paperclip jars.
 A scheduled workflow rebases this feature onto upstream Paper 26.2 every six hours, rebuilds the server
 and publishes a new release. If Paper moves to a different Minecraft version the automation stops on
 purpose instead of attempting a cross-version port, and the feature has to be ported by hand.
