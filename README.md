@@ -54,13 +54,17 @@ A scheduled workflow rebases this feature onto upstream Paper 26.2 every six hou
 and publishes a new release, with no input needed.
 
 If Paper moves to a different Minecraft version the automation **stops on purpose** instead of attempting a
-cross-version port. It raises a single issue titled `Manual port required: …` containing the port checklist and
-then goes quiet, rather than failing every six hours. Nothing is rebased, pushed or released, so the last
-working build stays downloadable. Once the feature has been ported and a run succeeds, the issue is closed
-automatically.
+cross-version port. Nothing is rebased, pushed or released, so the last working build stays downloadable.
+
+It alerts **once** rather than failing every six hours: the first run that sees the new version fails on
+purpose, and records that it has alerted in a `port-required` tag. Scheduled runs after that report only that
+they are still waiting. If issues are enabled on this repository it also opens a `Manual port required: …`
+issue containing the port checklist. Once the feature has been ported and a run succeeds on the new version,
+the alert clears itself — the tag is deleted and the issue closed.
 
 > A manual **Run workflow** always fails loudly when the Minecraft version does not match, so an intentional
-> stop can never be mistaken for a successful update.
+> stop can never be mistaken for a successful update. The `port-required` tag is safe to delete by hand if you
+> want to force the alert to fire again.
 
 Downloads are named the way Paper names its own, with the build number straight after the
 Minecraft version and our fork appended:
