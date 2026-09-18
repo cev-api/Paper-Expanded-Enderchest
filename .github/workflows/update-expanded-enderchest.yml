@@ -374,10 +374,12 @@ jobs:
               --notes-file "$notes_file"
           fi
 
-      # A successful run means the fork is building again, so the port issue can go away by
-      # itself instead of needing to be closed by hand after a port.
+      # A successful run on our own Minecraft version means the fork is building again, so the
+      # port issue can go away by itself instead of needing to be closed by hand. This is keyed
+      # on the version rather than on an update happening, because after a port the branch is
+      # usually already level with upstream and no new build is required.
       - name: Close the port issue once a build succeeds again
-        if: steps.check.outputs.update == 'true'
+        if: steps.upstream.outputs.mc_version == env.SUPPORTED_MC_VERSION
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
