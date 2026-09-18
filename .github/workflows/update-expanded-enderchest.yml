@@ -166,6 +166,39 @@ jobs:
         if: steps.check.outputs.update == 'true'
         run: ./gradlew :paper-server:test --tests "io.papermc.paper.enderchest.ExpandedEnderChestTestSuite" --stacktrace
 
+      # Paper publishes its downloads as paper-<mc>-<build>.jar. Work out which published
+      # build our upstream commit belongs to so our own jar can carry the same number.
+      - name: Resolve the upstream Paper build number
+        if: steps.check.outputs.update == 'true'
+        id: build
+        run: |
+          set -euo pipefail
+          outputs=""
+          if command -v python3 >/dev/null 2>&1; then
+            outputs="$(python3 .github/scripts/resolve-paper-build.py "$SUPPORTED_MC_VERSION" "${{ steps.upstream.outputs.sha }}" || true)"
+          else
+            echo "::warning title=python3 missing::Cannot resolve the upstream Paper build number; falling back to commit SHA naming."
+          fi
+
+          number="$(printf '%s\n' "$outputs" | sed -n 's/^number=//p')"
+          label="$(printf '%s\n' "$outputs" | sed -n 's/^label=//p')"
+          note="$(printf '%s\n' "$outputs" | sed -n 's/^note=//p')"
+          [ -n "$note" ] || note="no upstream build number resolved"
+
+          {
+            echo "number=${number}"
+            echo "label=${label}"
+            echo "note=${note}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -n "$number" ]; then
+            # Drives Paper's own versioning, so the compiled jar is named
+            # paper-paperclip-<mc>.build.<number>-<channel>.jar and the server reports the build at runtime.
+            echo "BUILD_NUMBER=${number}" >> "$GITHUB_ENV"
+          fi
+
+          echo "Upstream Paper build: ${label:-<unresolved>} (${note})"
+
       - name: Build the server jar
         if: steps.check.outputs.update == 'true'
         run: ./gradlew createPaperclipJar --stacktrace
@@ -175,9 +208,13 @@ jobs:
         id: jar
         run: |
           set -euo pipefail
-          jar="$(find paper-server/build/libs -maxdepth 1 -name 'paper-paperclip-*.jar' | head -n 1)"
+          mc="$SUPPORTED_MC_VERSION"
+          jar="$(find paper-server/build/libs -maxdepth 1 -name "paper-paperclip-${mc}.build.*.jar" | head -n 1)"
           if [ -z "$jar" ]; then
-            echo "::error title=Missing build output::createPaperclipJar did not produce paper-server/build/libs/paper-paperclip-*.jar"
+            jar="$(find paper-server/build/libs -maxdepth 1 -name 'paper-paperclip-*.jar' ! -name '*-local-SNAPSHOT.jar' | head -n 1)"
+          fi
+          if [ -z "$jar" ]; then
+            echo "::error title=Missing build output::createPaperclipJar did not produce a paperclip jar in paper-server/build/libs"
             exit 1
           fi
           echo "path=${jar}" >> "$GITHUB_OUTPUT"
@@ -201,8 +238,22 @@ jobs:
           short="${{ steps.upstream.outputs.short_sha }}"
           repo="$GITHUB_REPOSITORY"
           branch_sha="$(git rev-parse HEAD)"
+          label="${{ steps.build.outputs.label }}"
+          note="${{ steps.build.outputs.note }}"
+          # Mirror Paper's own paper-<mc>-<build>.jar naming when a build number was resolved,
+          # and fall back to the upstream commit when it was not.
+          if [ -n "$label" ]; then
+            build_desc="${label} (${note})"
+            release_title="Expanded ender chest ${mc} (build ${label})"
+          else
+            label="${short}"
+            build_desc="unresolved, this build is named by its upstream commit"
+            release_title="Expanded ender chest ${mc} (${short})"
+          fi
+          alias_title="Expanded ender chest ${mc} (latest: ${label})"
+          # The tag stays commit based so two different builds can never collide on one tag.
           tag="expanded-enderchest-${mc}-${short}"
-          asset_name="paper-${mc}-expanded-enderchest-${short}.jar"
+          asset_name="paper-${mc}-expanded-enderchest-${label}.jar"
           asset_path="${RUNNER_TEMP}/${asset_name}"
           notes_file="${RUNNER_TEMP}/release-notes.md"
 
@@ -210,6 +261,7 @@ jobs:
           Unofficial downstream Paper build with a configurable native ender chest.
 
           - Minecraft version: ${mc}
+          - Upstream Paper build: ${build_desc}
           - Upstream Paper commit: ${{ steps.upstream.outputs.sha }}
           - Source branch commit: ${branch_sha}
           - Source: https://github.com/${GITHUB_REPOSITORY}/tree/${CUSTOM_BRANCH}
@@ -235,7 +287,7 @@ jobs:
             gh release create "$tag" "$asset_path" \
               --repo "$repo" \
               --target "$branch_sha" \
-              --title "Expanded ender chest ${mc} (${short})" \
+              --title "${release_title}" \
               --notes-file "$notes_file"
           fi
 
@@ -250,13 +302,13 @@ jobs:
             gh release upload "$alias_tag" "$alias_asset" --repo "$repo" --clobber
             gh release edit "$alias_tag" \
               --repo "$repo" \
-              --title "Expanded ender chest ${mc} (latest)" \
+              --title "${alias_title}" \
               --notes-file "$notes_file"
           else
             gh release create "$alias_tag" "$alias_asset" \
               --repo "$repo" \
               --target "$branch_sha" \
-              --title "Expanded ender chest ${mc} (latest)" \
+              --title "${alias_title}" \
               --notes-file "$notes_file"
           fi
 
