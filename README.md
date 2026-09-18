@@ -51,8 +51,16 @@ change to take effect.
 
 The [releases page](https://github.com/cev-api/Paper-Expanded-Enderchest/releases) contains precompiled Paperclip jars.
 A scheduled workflow rebases this feature onto upstream Paper 26.2 every six hours, rebuilds the server
-and publishes a new release. If Paper moves to a different Minecraft version the automation stops on
-purpose instead of attempting a cross-version port, and the feature has to be ported by hand.
+and publishes a new release, with no input needed.
+
+If Paper moves to a different Minecraft version the automation **stops on purpose** instead of attempting a
+cross-version port. It raises a single issue titled `Manual port required: …` containing the port checklist and
+then goes quiet, rather than failing every six hours. Nothing is rebased, pushed or released, so the last
+working build stays downloadable. Once the feature has been ported and a run succeeds, the issue is closed
+automatically.
+
+> A manual **Run workflow** always fails loudly when the Minecraft version does not match, so an intentional
+> stop can never be mistaken for a successful update.
 
 Downloads are named the way Paper names its own, with the build number straight after the
 Minecraft version and our fork appended:
