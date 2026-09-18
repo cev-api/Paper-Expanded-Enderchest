@@ -27,6 +27,8 @@ concurrency:
 
 permissions:
   contents: write
+  # Needed to raise the manual port issue when upstream leaves our Minecraft version.
+  issues: write
 
 env:
   CUSTOM_BRANCH: expanded-enderchest
@@ -95,13 +97,62 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Upstream Paper main is ${sha} targeting Minecraft ${version}"
 
-      - name: Refuse to cross a Minecraft version boundary
+      # Upstream leaving our Minecraft version is the one thing this fork must never follow
+      # blindly. Rather than fail every six hours, raise a single issue and then stay quiet.
+      - name: Stop if upstream left our Minecraft version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.upstream.outputs.mc_version }}" != "$SUPPORTED_MC_VERSION" ]; then
-            echo "::error title=Manual port required::Upstream Paper now targets Minecraft ${{ steps.upstream.outputs.mc_version }} instead of ${SUPPORTED_MC_VERSION}. Automatic updates intentionally stop here so that no cross-version port is attempted. Port the expanded ender chest by hand, then update SUPPORTED_MC_VERSION in this workflow."
-            exit 1
+          upstream_mc="${{ steps.upstream.outputs.mc_version }}"
+          if [ "$upstream_mc" = "$SUPPORTED_MC_VERSION" ]; then
+            echo "Upstream is still on Minecraft ${SUPPORTED_MC_VERSION}"
+            exit 0
           fi
+
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "Manual port required in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "::notice title=Manual port required::Issue #${existing} is already open, not raising another."
+          else
+            body_file="${RUNNER_TEMP}/port-required.md"
+            cat > "$body_file" <<EOF
+          Upstream Paper now targets **Minecraft ${upstream_mc}**, but this fork is built for **Minecraft ${SUPPORTED_MC_VERSION}**.
+
+          Automatic updates have **stopped on purpose** so that no cross-version port is ever attempted blind.
+          Nothing was rebased, pushed or released, so the last ${SUPPORTED_MC_VERSION} build is still downloadable.
+          Scheduled runs stay quiet until this is resolved.
+
+          ## Port checklist
+
+          - [ ] Set \`SUPPORTED_MC_VERSION\` to \`${upstream_mc}\` in \`.github/workflows/update-expanded-enderchest.yml\`
+          - [ ] \`git fetch upstream main\`, then rebase \`${CUSTOM_BRANCH}\` onto \`upstream/main\`
+          - [ ] Resolve conflicts. \`paper-server/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java\` is the most likely one, because upstream edits that file too
+          - [ ] Check \`paper-server/patches/features/0035-Expand-native-ender-chest-capacity.patch\` still applies. It touches \`PlayerEnderChestContainer\` and \`EnderChestBlock\`. If it no longer applies, fix the sources and run \`./gradlew rebuildPatches\`
+          - [ ] \`./gradlew applyPatches && ./gradlew createPaperclipJar\`
+          - [ ] \`./gradlew :paper-server:test --tests "io.papermc.paper.enderchest.ExpandedEnderChestTestSuite"\`
+          - [ ] Commit, push, then run the **Update expanded ender chest** workflow manually. It closes this issue by itself once a build succeeds
+
+          ## Why it stops
+
+          The ender chest feature is a native server change that frees the real \`PlayerEnderChestContainer\` and opens that same container in a sized \`ChestMenu\`. Porting it across a Minecraft version is a judgement call about how Mojang and Paper restructured those classes, which is exactly the kind of change that should not be guessed at automatically.
+          EOF
+
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Manual port required: upstream Paper moved to Minecraft ${upstream_mc}" \
+              --body-file "$body_file"
+            echo "::notice title=Manual port required::Opened an issue for the ${SUPPORTED_MC_VERSION} to ${upstream_mc} port. Scheduled runs will now stay quiet."
+          fi
+
+          # A scheduled run stays quiet so the port is one notification rather than a stream of
+          # failures. An explicit manual run still fails loudly, so it cannot be mistaken for a
+          # successful update.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            exit 0
+          fi
+          echo "::error title=Manual port required::Upstream Paper now targets Minecraft ${upstream_mc} instead of ${SUPPORTED_MC_VERSION}. Automatic updates intentionally stop here so that no cross-version port is attempted."
+          exit 1
 
       - name: Decide whether an update is required
         id: check
@@ -322,6 +373,24 @@ jobs:
               --title "${alias_title}" \
               --notes-file "$notes_file"
           fi
+
+      # A successful run means the fork is building again, so the port issue can go away by
+      # itself instead of needing to be closed by hand after a port.
+      - name: Close the port issue once a build succeeds again
+        if: steps.check.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "Manual port required in:title" --json number --jq '.[0].number // empty')"
+          if [ -z "$number" ]; then
+            echo "No open port issue"
+            exit 0
+          fi
+          gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+            --comment "Closed automatically: this fork is building again on Minecraft ${SUPPORTED_MC_VERSION}."
+          echo "Closed issue #${number}"
 
       - name: Upload logs on failure
         if: failure()
