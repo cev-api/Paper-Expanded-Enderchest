@@ -98,7 +98,8 @@ jobs:
           echo "Upstream Paper main is ${sha} targeting Minecraft ${version}"
 
       # Upstream leaving our Minecraft version is the one thing this fork must never follow
-      # blindly. Rather than fail every six hours, raise a single issue and then stay quiet.
+      # blindly. Alert once, then stay quiet, so a port is a single notification rather than a
+      # failure every six hours.
       - name: Stop if upstream left our Minecraft version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,18 +111,33 @@ jobs:
             exit 0
           fi
 
-          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "Manual port required in:title" --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            echo "::notice title=Manual port required::Issue #${existing} is already open, not raising another."
-          else
+          # The tag is the "already alerted" state. It needs no permission beyond the contents
+          # write we already have, and it is cleared automatically once a build succeeds again.
+          marker="port-required"
+          issues_enabled="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues' 2>/dev/null || echo false)"
+
+          if git ls-remote --exit-code origin "refs/tags/${marker}" >/dev/null 2>&1; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              echo "::notice title=Manual port required::Still waiting for the Minecraft ${upstream_mc} port, staying quiet. Nothing was rebased, pushed or released."
+              exit 0
+            fi
+            echo "::error title=Manual port required::Upstream Paper now targets Minecraft ${upstream_mc} instead of ${SUPPORTED_MC_VERSION}. Automatic updates intentionally stop here so that no cross-version port is attempted."
+            exit 1
+          fi
+
+          # Record the alert before announcing it, so a failure part way through this step
+          # cannot turn into a repeating notification.
+          git tag -f "$marker" "${{ steps.upstream.outputs.sha }}"
+          git push origin "refs/tags/${marker}"
+
+          if [ "$issues_enabled" = "true" ]; then
             body_file="${RUNNER_TEMP}/port-required.md"
             cat > "$body_file" <<EOF
           Upstream Paper now targets **Minecraft ${upstream_mc}**, but this fork is built for **Minecraft ${SUPPORTED_MC_VERSION}**.
 
           Automatic updates have **stopped on purpose** so that no cross-version port is ever attempted blind.
           Nothing was rebased, pushed or released, so the last ${SUPPORTED_MC_VERSION} build is still downloadable.
-          Scheduled runs stay quiet until this is resolved.
+          Scheduled runs stay quiet from here.
 
           ## Port checklist
 
@@ -131,7 +147,7 @@ jobs:
           - [ ] Check \`paper-server/patches/features/0035-Expand-native-ender-chest-capacity.patch\` still applies. It touches \`PlayerEnderChestContainer\` and \`EnderChestBlock\`. If it no longer applies, fix the sources and run \`./gradlew rebuildPatches\`
           - [ ] \`./gradlew applyPatches && ./gradlew createPaperclipJar\`
           - [ ] \`./gradlew :paper-server:test --tests "io.papermc.paper.enderchest.ExpandedEnderChestTestSuite"\`
-          - [ ] Commit, push, then run the **Update expanded ender chest** workflow manually. It closes this issue by itself once a build succeeds
+          - [ ] Commit, push, then run the **Update expanded ender chest** workflow manually. It clears this alert by itself once a build succeeds
 
           ## Why it stops
 
@@ -141,17 +157,12 @@ jobs:
             gh issue create \
               --repo "$GITHUB_REPOSITORY" \
               --title "Manual port required: upstream Paper moved to Minecraft ${upstream_mc}" \
-              --body-file "$body_file"
-            echo "::notice title=Manual port required::Opened an issue for the ${SUPPORTED_MC_VERSION} to ${upstream_mc} port. Scheduled runs will now stay quiet."
+              --body-file "$body_file" || echo "::warning title=Could not open an issue::The run itself is still the alert."
+          else
+            echo "Issues are disabled on this repository, so this failing run is the alert."
           fi
 
-          # A scheduled run stays quiet so the port is one notification rather than a stream of
-          # failures. An explicit manual run still fails loudly, so it cannot be mistaken for a
-          # successful update.
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            exit 0
-          fi
-          echo "::error title=Manual port required::Upstream Paper now targets Minecraft ${upstream_mc} instead of ${SUPPORTED_MC_VERSION}. Automatic updates intentionally stop here so that no cross-version port is attempted."
+          echo "::error title=Manual port required::Upstream Paper now targets Minecraft ${upstream_mc} instead of ${SUPPORTED_MC_VERSION}. This is the only failure you will see; later scheduled runs stay quiet until the port is done. State is recorded in the '${marker}' tag."
           exit 1
 
       - name: Decide whether an update is required
@@ -375,24 +386,39 @@ jobs:
           fi
 
       # A successful run on our own Minecraft version means the fork is building again, so the
-      # port issue can go away by itself instead of needing to be closed by hand. This is keyed
-      # on the version rather than on an update happening, because after a port the branch is
-      # usually already level with upstream and no new build is required.
-      - name: Close the port issue once a build succeeds again
+      # port alert can go away by itself. Keyed on the version rather than on an update
+      # happening, because after a port the branch is usually already level with upstream and
+      # no new build is required.
+      - name: Clear the port alert once a build succeeds again
         if: steps.upstream.outputs.mc_version == env.SUPPORTED_MC_VERSION
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "Manual port required in:title" --json number --jq '.[0].number // empty')"
-          if [ -z "$number" ]; then
-            echo "No open port issue"
-            exit 0
+          marker="port-required"
+          cleared="false"
+
+          if git ls-remote --exit-code origin "refs/tags/${marker}" >/dev/null 2>&1; then
+            git push origin --delete "refs/tags/${marker}"
+            echo "Removed the ${marker} tag"
+            cleared="true"
           fi
-          gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
-            --comment "Closed automatically: this fork is building again on Minecraft ${SUPPORTED_MC_VERSION}."
-          echo "Closed issue #${number}"
+
+          issues_enabled="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues' 2>/dev/null || echo false)"
+          if [ "$issues_enabled" = "true" ]; then
+            number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search "Manual port required in:title" --json number --jq '.[0].number // empty')"
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+                --comment "Closed automatically: this fork is building again on Minecraft ${SUPPORTED_MC_VERSION}."
+              echo "Closed issue #${number}"
+              cleared="true"
+            fi
+          fi
+
+          if [ "$cleared" = "false" ]; then
+            echo "No port alert to clear"
+          fi
 
       - name: Upload logs on failure
         if: failure()
