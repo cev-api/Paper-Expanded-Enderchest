@@ -54,6 +54,19 @@ A scheduled workflow rebases this feature onto upstream Paper 26.2 every six hou
 and publishes a new release. If Paper moves to a different Minecraft version the automation stops on
 purpose instead of attempting a cross-version port, and the feature has to be ported by hand.
 
+Downloads are named after the upstream Paper build they correspond to, mirroring Paper's own
+`paper-26.2-124.jar` naming:
+
+| Download | Meaning |
+| --- | --- |
+| `paper-26.2-expanded-enderchest-124.jar` | is exactly upstream Paper build 124 |
+| `paper-26.2-expanded-enderchest-123+.jar` | contains everything in build 123 plus newer upstream commits that have no build yet |
+
+The same number is compiled into the server. It names the intermediate artefact
+`paper-paperclip-26.2.build.124-stable.jar` and is reported on startup as
+`Paper 26.2-124-expanded-enderchest`. Release tags stay commit based, so a build is never overwritten
+by a later one, and the `expanded-enderchest-latest` release always points at the newest build.
+
 ---
 
 **Support and Project Discussion:**
