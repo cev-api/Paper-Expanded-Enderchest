@@ -59,8 +59,8 @@ Downloads are named after the upstream Paper build they correspond to, mirroring
 
 | Download | Meaning |
 | --- | --- |
-| `paper-26.2-expanded-enderchest-124.jar` | is exactly upstream Paper build 124 |
-| `paper-26.2-expanded-enderchest-123+.jar` | contains everything in build 123 plus newer upstream commits that have no build yet |
+| `paper-26.2-expanded-enderchest-124.jar` | upstream Paper build 124 contains this code; the release notes give the exact commit |
+| `paper-26.2-expanded-enderchest-124+.jar` | newer than build 124 — contains all of it plus upstream commits that have no build yet |
 
 The same number is compiled into the server. It names the intermediate artefact
 `paper-paperclip-26.2.build.124-stable.jar` and is reported on startup as
