@@ -253,8 +253,11 @@ jobs:
           alias_title="Expanded ender chest ${mc} (latest: ${label})"
           # The tag stays commit based so two different builds can never collide on one tag.
           tag="expanded-enderchest-${mc}-${short}"
-          asset_name="paper-${mc}-expanded-enderchest-${label}.jar"
+          # Mirror Paper's own paper-<mc>-<build>.jar layout, with our suffix appended.
+          asset_name="paper-${mc}-${label}-expanded-enderchest.jar"
           asset_path="${RUNNER_TEMP}/${asset_name}"
+          alias_asset_name="${asset_name}"
+          alias_asset="${RUNNER_TEMP}/${alias_asset_name}"
           notes_file="${RUNNER_TEMP}/release-notes.md"
 
           cat > "$notes_file" <<EOF
@@ -291,14 +294,22 @@ jobs:
               --notes-file "$notes_file"
           fi
 
-          # Moving alias pointing at the newest build. The immutable SHA specific
+          # Moving alias pointing at the newest build. The immutable commit specific
           # releases above are never modified.
           alias_tag="expanded-enderchest-latest"
-          alias_asset="${RUNNER_TEMP}/paper-${mc}-expanded-enderchest-latest.jar"
           cp "${{ steps.jar.outputs.path }}" "$alias_asset"
           git tag -f "$alias_tag" "$branch_sha"
           git push --force origin "refs/tags/${alias_tag}"
           if gh release view "$alias_tag" --repo "$repo" >/dev/null 2>&1; then
+            # Drop the previous build's asset so this release always carries exactly one file,
+            # named after the build it currently points at.
+            while IFS= read -r existing; do
+              [ -n "$existing" ] || continue
+              if [ "$existing" != "$alias_asset_name" ]; then
+                echo "Removing superseded asset ${existing}"
+                gh release delete-asset "$alias_tag" "$existing" --repo "$repo" --yes
+              fi
+            done <<< "$(gh release view "$alias_tag" --repo "$repo" --json assets --jq '.assets[].name')"
             gh release upload "$alias_tag" "$alias_asset" --repo "$repo" --clobber
             gh release edit "$alias_tag" \
               --repo "$repo" \
