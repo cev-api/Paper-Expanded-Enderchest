@@ -22,10 +22,10 @@ index 4df3a32faf85595372f4b250482d852c985ea3ab..5fff44d6271e91729573a95b18066fea
          // CraftBukkit end
      }
 diff --git a/net/minecraft/world/level/block/EnderChestBlock.java b/net/minecraft/world/level/block/EnderChestBlock.java
-index f1a5b9670dd04b800a8d755f32364458a16d924a..c6c272bb2bb518fa66d3e60ff8b6a2e171a6f343 100644
+index 34e6bb7d246f065698def3b1f7a0d237f304f2aa..849b822fd842a9c66d255ff7cb53555e2a375c12 100644
 --- a/net/minecraft/world/level/block/EnderChestBlock.java
 +++ b/net/minecraft/world/level/block/EnderChestBlock.java
-@@ -90,7 +90,20 @@ public class EnderChestBlock extends AbstractChestBlock<EnderChestBlockEntity> i
+@@ -83,7 +83,20 @@ public class EnderChestBlock extends AbstractChestBlock<EnderChestBlockEntity> i
              // Paper start - Fix InventoryOpenEvent cancellation - moved up;
              container.setActiveChest(enderChest); // Needs to happen before ChestMenu.threeRows as it is required for opening animations
              if (level instanceof ServerLevel serverLevel && player.openMenu(
